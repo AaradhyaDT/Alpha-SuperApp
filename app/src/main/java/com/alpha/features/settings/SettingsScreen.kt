@@ -161,7 +161,7 @@ fun SettingsScreen(
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 AboutRow("Platform", "Android (Kotlin + Jetpack Compose)")
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                AboutRow("AI Backend", "Gemini 2.0 Flash")
+                AboutRow("AI Backend", "Gemini 2.5 Flash")
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 AboutRow("Robot Firmware", "SBR V7")
             }

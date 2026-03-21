@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 
 object GeminiClient {
 
-    private const val MODEL = "gemini-2.0-flash"
+    private const val MODEL = "gemini-2.5-flash"
     private val API_URL get() =
         "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent" +
                 "?key=${BuildConfig.GEMINI_API_KEY}"
