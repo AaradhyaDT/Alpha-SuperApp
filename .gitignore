@@ -1,0 +1,25 @@
+# Local secrets — NEVER commit these
+local.properties
+
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android Studio
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google services
+google-services.json
+
+# Generated
+/app/src/main/java/**/BuildConfig.java

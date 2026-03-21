@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Background circle -->
+    <path
+        android:fillColor="#1A1A2E"
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
+    <!-- Greek alpha symbol α -->
+    <path
+        android:fillColor="#7C4DFF"
+        android:pathData="M54,28 C42,28 33,37 33,52 C33,67 42,76 54,76 C60,76 65,73 69,68 L71,74 L78,74 L70,52 L78,30 L71,30 L69,36 C65,31 60,28 54,28 Z M54,35 C62,35 68,43 68,52 C68,61 62,69 54,69 C46,69 40,61 40,52 C40,43 46,35 54,35 Z" />
+</vector>
