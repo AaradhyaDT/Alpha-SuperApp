@@ -2,6 +2,10 @@
 
 A comprehensive Android application demonstrating modern development practices and architectural patterns.
 
+## Version
+
+Current version: 1.1.0 (managed automatically via semantic versioning)
+
 ## Overview
 
 Alpha SuperApp is a feature-rich Android application built with the latest Android development tools and best practices. The project showcases professional app development standards including proper dependency management, build configuration, and resource organization.

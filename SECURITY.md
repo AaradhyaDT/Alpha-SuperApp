@@ -1,5 +1,9 @@
 # Security Policy
 
+## Version
+
+This security policy applies to version 1.1.0 and later. For older versions, refer to historical releases.
+
 ## Reporting a Vulnerability
 
 At Alpha SuperApp, we take security seriously. If you discover a security vulnerability, please **do not** create a public GitHub issue. Instead, please follow our responsible disclosure process:

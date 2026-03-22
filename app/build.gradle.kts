@@ -53,7 +53,7 @@ android {
 
 semanticBuildVersioning {
     // Starting version if no tags exist; otherwise uses latest tag
-    startingVersion = "1.1.1"
+    startingVersion = "1.1.0"
     // Other configurations can be added here
 }
 
