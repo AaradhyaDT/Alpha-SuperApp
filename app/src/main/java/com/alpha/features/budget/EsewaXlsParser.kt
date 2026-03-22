@@ -6,7 +6,6 @@ import com.alpha.features.budget.models.Transaction
 import com.alpha.features.budget.models.TransactionCategory
 import com.alpha.features.budget.models.TransactionSource
 import org.apache.poi.hssf.usermodel.HSSFWorkbook
-import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellType
 import org.apache.poi.ss.usermodel.Row
 import java.text.SimpleDateFormat
@@ -20,12 +19,12 @@ data class XlsParseResult(
 
 object EsewaXlsParser {
 
-    // eSewa date format: "2026-03-22 14:28:51.0"
-    private val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-
     fun parse(context: Context, uri: Uri): XlsParseResult {
         val inputStream = context.contentResolver.openInputStream(uri)
             ?: throw IllegalArgumentException("Cannot open file")
+
+        // eSewa date format: "2026-03-22 14:28:51.0"
+        val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
         val workbook = HSSFWorkbook(inputStream)
         val sheet    = workbook.getSheetAt(0)
