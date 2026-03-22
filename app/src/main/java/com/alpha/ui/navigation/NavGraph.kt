@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.alpha.features.budget.BudgetScreen
 import com.alpha.features.calculator.CalculatorScreen
 import com.alpha.features.settings.SettingsScreen
 import com.alpha.features.websearch.WebSearchScreen
@@ -33,6 +34,9 @@ fun AlphaNavGraph(isDarkMode: Boolean, onThemeToggle: () -> Unit) {
         }
         composable("settings") {
             SettingsScreen(onBack = { navController.popBackStack() })
+        }
+        composable("budget") {
+            BudgetScreen(onBack = { navController.popBackStack() })
         }
     }
 }

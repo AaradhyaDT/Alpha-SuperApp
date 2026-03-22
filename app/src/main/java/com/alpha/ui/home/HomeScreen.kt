@@ -23,6 +23,7 @@ val ALL_MODULES = listOf(
     AppModule("web_search", "Web Search & Summarize", "Ask anything — Gemini searches the web and returns a clean summary.", "🔍"),
     AppModule("calculator", "Calculator", "Clean, fast calculator for everyday math.", "🧮"),
     AppModule("sbr_control", "SBR Control", "Gesture-controlled self-balancing robot via Bluetooth.", "🤖"),
+    AppModule("budget", "Budget Tracker", "Track eSewa payments and expenses by category.", "💰"),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

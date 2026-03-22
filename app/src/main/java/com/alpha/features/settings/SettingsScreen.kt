@@ -1,20 +1,51 @@
 package com.alpha.features.settings
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.alpha.BuildConfig
+import com.alpha.ui.theme.Exo
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -22,10 +53,18 @@ fun SettingsScreen(
     onBack: () -> Unit,
     vm: SettingsViewModel = viewModel()
 ) {
-    val state by vm.uiState.collectAsState()
+    val state by vm.uiState.collectAsStateWithLifecycle()
 
-    // Local draft for text fields (committed on Done/focus-leave)
     var btNameDraft by remember(state.btDeviceName) { mutableStateOf(state.btDeviceName) }
+
+    // FIX: no longer keyed on state.stabilityFrames to prevent recomposition-driven reset
+    var sliderValue by remember { mutableFloatStateOf(state.stabilityFrames.toFloat()) }
+    var isDragging by remember { mutableStateOf(false) }
+
+    // FIX: only sync from ViewModel when user is not actively dragging
+    LaunchedEffect(state.stabilityFrames) {
+        if (!isDragging) sliderValue = state.stabilityFrames.toFloat()
+    }
 
     Scaffold(
         topBar = {
@@ -52,7 +91,6 @@ fun SettingsScreen(
             SettingsSectionHeader("Appearance")
 
             SettingsCard {
-                // Use system theme toggle
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -72,7 +110,6 @@ fun SettingsScreen(
                     )
                 }
 
-                // Manual dark mode — only shown when system theme is off
                 if (!state.useSystemTheme) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Row(
@@ -95,7 +132,6 @@ fun SettingsScreen(
             SettingsSectionHeader("SBR Control")
 
             SettingsCard {
-                // BT device name
                 Text("Bluetooth device name", style = MaterialTheme.typography.bodyLarge)
                 Text(
                     "Name of the HC-05 as it appears in your paired devices list",
@@ -106,11 +142,12 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = btNameDraft,
                     onValueChange = { btNameDraft = it },
-                    label = { Text("Device name") },
-                    placeholder = { Text(AppSettings.DEFAULT_BT_NAME) },
+                    label = { Text("Device name", style = TextStyle(fontFamily = Exo)) },
+                    placeholder = { Text(AppSettings.DEFAULT_BT_NAME, style = TextStyle(fontFamily = Exo)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(fontFamily = Exo),
                     trailingIcon = {
                         if (btNameDraft != state.btDeviceName) {
                             TextButton(onClick = { vm.setBtDeviceName(btNameDraft) }) {
@@ -122,11 +159,10 @@ fun SettingsScreen(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-                // Stability frames slider
                 Text("Gesture stability frames", style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    "How many identical frames required to confirm a gesture (${state.stabilityFrames}). " +
-                    "Higher = more stable but slower response.",
+                    "How many identical frames required to confirm a gesture (${sliderValue.toInt()}). " +
+                            "Higher = more stable but slower response.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -137,8 +173,17 @@ fun SettingsScreen(
                 ) {
                     Text("1", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     Slider(
-                        value = state.stabilityFrames.toFloat(),
-                        onValueChange = { vm.setStabilityFrames(it.toInt()) },
+                        value = sliderValue,
+                        onValueChange = {
+                            isDragging = true
+                            sliderValue = it
+                        },
+                        // FIX: set isDragging = false before saving so LaunchedEffect
+                        // doesn't fight the final committed value
+                        onValueChangeFinished = {
+                            isDragging = false
+                            vm.setStabilityFrames(sliderValue.toInt().coerceIn(1, 20))
+                        },
                         valueRange = 1f..20f,
                         steps = 18,
                         modifier = Modifier.weight(1f)
@@ -155,7 +200,7 @@ fun SettingsScreen(
             SettingsCard {
                 AboutRow("App", "Alpha")
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                AboutRow("Version", "1.0")
+                AboutRow("Version", BuildConfig.VERSION_NAME)
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 AboutRow("Developer", "Aaradhya")
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -205,8 +250,15 @@ private fun AboutRow(label: String, value: String) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium
+        )
     }
 }

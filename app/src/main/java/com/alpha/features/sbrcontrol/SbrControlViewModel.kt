@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class SbrControlViewModel(app: Application) : AndroidViewModel(app) {
@@ -44,7 +45,6 @@ class SbrControlViewModel(app: Application) : AndroidViewModel(app) {
     // ── Core components ───────────────────────────────────────────────────
 
     private val bt = BluetoothComm()
-    // Stability window read from settings; default until DataStore resolves
     private var stability = GestureStability(windowSize = AppSettings.DEFAULT_STABILITY_FRAMES)
     private var handLandmarker: HandLandmarker? = null
     private var transformationMatrix = Matrix()
@@ -73,8 +73,8 @@ class SbrControlViewModel(app: Application) : AndroidViewModel(app) {
     // ── MediaPipe initialisation ──────────────────────────────────────────
 
     fun initLandmarker(context: android.content.Context) {
+        if (handLandmarker != null) return
         viewModelScope.launch(Dispatchers.IO) {
-            // Read stability frames from settings before init
             stabilityFrames = AppSettings.stabilityFramesFlow(ctx).first()
             stability = GestureStability(windowSize = stabilityFrames)
 
@@ -104,17 +104,16 @@ class SbrControlViewModel(app: Application) : AndroidViewModel(app) {
 
     fun connectBluetooth() {
         viewModelScope.launch {
-            // Read BT device name from settings
             val deviceName = AppSettings.btDeviceNameFlow(ctx).first()
-            updateState { it.copy(btStatus = "Connecting to $deviceName…", btConnecting = true) }
+            _uiState.update { it.copy(btStatus = "Connecting to $deviceName…", btConnecting = true) }
             val result = bt.connect(ctx, deviceName)
             result.fold(
                 onSuccess = {
-                    updateState { it.copy(btStatus = "Connected ● $deviceName", btConnected = true, btConnecting = false) }
+                    _uiState.update { it.copy(btStatus = "Connected ● $deviceName", btConnected = true, btConnecting = false) }
                     appendLog("BT connected to $deviceName")
                 },
                 onFailure = { e ->
-                    updateState { it.copy(btStatus = "Failed: ${e.message}", btConnected = false, btConnecting = false) }
+                    _uiState.update { it.copy(btStatus = "Failed: ${e.message}", btConnected = false, btConnecting = false) }
                     appendLog("BT error: ${e.message}")
                 }
             )
@@ -123,23 +122,26 @@ class SbrControlViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnectBluetooth() {
         bt.disconnect()
-        updateState { it.copy(btStatus = "Disconnected", btConnected = false, btConnecting = false) }
+        _uiState.update { it.copy(btStatus = "Disconnected", btConnected = false, btConnecting = false) }
         appendLog("BT disconnected")
     }
 
     fun toggleSmoothMode() {
-        val newMode = !_uiState.value.smoothMode
         linearHold = 0
         resetTransition()
-        updateState { it.copy(smoothMode = newMode) }
-        appendLog("Mode → ${if (newMode) "SMOOTH" else "DIRECT"}")
+        _uiState.update { it.copy(smoothMode = !it.smoothMode) }
+        appendLog("Mode → ${if (_uiState.value.smoothMode) "SMOOTH" else "DIRECT"}")
     }
 
     // ── Frame processing ──────────────────────────────────────────────────
 
+    private var isProcessing = false
+
     fun processFrame(imageProxy: ImageProxy) {
         val landmarker = handLandmarker
-        if (landmarker == null) { imageProxy.close(); return }
+        if (landmarker == null || isProcessing) { imageProxy.close(); return }
+        
+        isProcessing = true
         try {
             val bitmap   = imageProxy.toBitmap()
             val rotation = imageProxy.imageInfo.rotationDegrees.toFloat()
@@ -150,42 +152,49 @@ class SbrControlViewModel(app: Application) : AndroidViewModel(app) {
             landmarker.detectAsync(mpImage, System.currentTimeMillis())
         } catch (e: Exception) {
             appendLog("Frame error: ${e.message}")
+            isProcessing = false
         } finally {
             imageProxy.close()
         }
     }
 
     private fun processHandResult(result: HandLandmarkerResult) {
-        val gestureCmd: String
-        val fingers: List<Int>
+        try {
+            val gestureCmd: String
+            val fingers: List<Int>
 
-        if (result.landmarks().isNotEmpty() && result.handedness().isNotEmpty()) {
-            val landmarks = result.landmarks()[0]
-            val rawLabel  = result.handedness()[0][0].categoryName()
-            fingers       = HandGestureProcessor.getFingers(landmarks, rawLabel)
-            val cmd       = GestureLogic.fingersToCmd(fingers)
-            gestureCmd    = stability.update(cmd)
-        } else {
-            fingers    = emptyList()
-            gestureCmd = stability.update("S")
+            if (result.landmarks().isNotEmpty() && result.handedness().isNotEmpty()) {
+                val landmarks = result.landmarks()[0]
+                val rawLabel  = result.handedness()[0][0].categoryName()
+                fingers       = HandGestureProcessor.getFingers(landmarks, rawLabel)
+                val cmd       = GestureLogic.fingersToCmd(fingers)
+                gestureCmd    = stability.update(cmd)
+            } else {
+                fingers    = emptyList()
+                gestureCmd = stability.update("S")
+            }
+
+            when {
+                gestureCmd in listOf("F", "B") ->
+                    linearHold = if (gestureCmd == prevCmd) minOf(linearHold + 1, 278) else 1
+                gestureCmd == "S" -> linearHold = maxOf(linearHold - 1, 0)
+                else -> linearHold = 0
+            }
+
+            val byte = dispatchCommand(gestureCmd)
+
+            _uiState.update { 
+                it.copy(
+                    fingers          = fingers,
+                    cmd              = gestureCmd,
+                    cmdByte          = byte,
+                    landmarkerResult = result,
+                    transitionStatus = transitionStatusString()
+                )
+            }
+        } finally {
+            isProcessing = false
         }
-
-        when {
-            gestureCmd in listOf("F", "B") ->
-                linearHold = if (gestureCmd == prevCmd) minOf(linearHold + 1, 278) else 1
-            gestureCmd == "S" -> linearHold = maxOf(linearHold - 1, 0)
-            else -> linearHold = 0
-        }
-
-        val byte = dispatchCommand(gestureCmd)
-
-        _uiState.value = _uiState.value.copy(
-            fingers          = fingers,
-            cmd              = gestureCmd,
-            cmdByte          = byte,
-            landmarkerResult = result,
-            transitionStatus = transitionStatusString()
-        )
     }
 
     // ── Command dispatch ──────────────────────────────────────────────────
@@ -263,14 +272,10 @@ class SbrControlViewModel(app: Application) : AndroidViewModel(app) {
         TransState.IDLE       -> ""
     }
 
-    private fun updateState(transform: (UiState) -> UiState) {
-        viewModelScope.launch(Dispatchers.Main) { _uiState.value = transform(_uiState.value) }
-    }
-
     private fun appendLog(msg: String) {
-        viewModelScope.launch(Dispatchers.Main) {
-            val lines = _uiState.value.log.lines().takeLast(8) + msg
-            _uiState.value = _uiState.value.copy(log = lines.joinToString("\n"))
+        _uiState.update { 
+            val lines = it.log.lines().takeLast(8) + msg
+            it.copy(log = lines.joinToString("\n"))
         }
     }
 

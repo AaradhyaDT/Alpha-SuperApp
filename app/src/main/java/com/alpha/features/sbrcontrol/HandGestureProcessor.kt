@@ -39,7 +39,7 @@ object HandGestureProcessor {
         //   "Right" hand (MediaPipe) → thumb is on the LEFT of image → extended: tip.x < IP.x
         //   "Left"  hand (MediaPipe) → thumb is on the RIGHT of image → extended: tip.x > IP.x
         // y-axis: tip must be above MCP base (not tucked downward)
-        val thumbXOk = if (rawLabel == "Right") {
+        val thumbXOk = if (rawLabel == "Left") {
             lm[4].x() < lm[3].x()
         } else {
             lm[4].x() > lm[3].x()

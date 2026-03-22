@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.gradle.semantic.build.versioning)
 }
 
 val localProps = Properties().apply {
@@ -20,14 +19,25 @@ android {
         applicationId = "com.alpha"
         minSdk = 26
         targetSdk = 36
-        versionCode = semanticBuildVersioning.versionCode
-        versionName = semanticBuildVersioning.versionName
+        versionCode = 1
+        versionName = "1.0.0"
 
         buildConfigField(
             "String",
             "GEMINI_API_KEY",
             "\"${localProps.getProperty("GEMINI_API_KEY", "your_gemini_api_key_here")}\""
         )
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
     }
 
     buildFeatures {
@@ -47,14 +57,18 @@ android {
     kotlin {
         compilerOptions {
             jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
+            freeCompilerArgs.addAll(
+                "-P",
+                "plugin:androidx.compose.compiler.plugins.kotlin:reportsDestination=" +
+                        project.buildDir.absolutePath + "/compose_metrics"
+            )
+            freeCompilerArgs.addAll(
+                "-P",
+                "plugin:androidx.compose.compiler.plugins.kotlin:metricsDestination=" +
+                        project.buildDir.absolutePath + "/compose_metrics"
+            )
         }
     }
-}
-
-semanticBuildVersioning {
-    // Starting version if no tags exist; otherwise uses latest tag
-    startingVersion = "1.1.0"
-    // Other configurations can be added here
 }
 
 dependencies {

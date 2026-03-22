@@ -24,12 +24,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import android.graphics.BitmapFactory
+import com.alpha.ui.theme.Exo
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -150,6 +152,7 @@ fun WebSearchScreen(onBack: () -> Unit, viewModel: WebSearchViewModel = viewMode
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = false,
                 maxLines = 4,
+                textStyle = TextStyle(fontFamily = Exo),
                 trailingIcon = {
                     if (state.query.isNotEmpty()) {
                         IconButton(onClick = { viewModel.onQueryChange("") }) {
