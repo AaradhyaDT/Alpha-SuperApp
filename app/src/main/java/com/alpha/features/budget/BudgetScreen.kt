@@ -51,10 +51,18 @@ fun BudgetScreen(
     onBack: () -> Unit,
     vm: BudgetViewModel = viewModel()
 ) {
-    val state by vm.uiState.collectAsStateWithLifecycle()
-    var selectedTab  by remember { mutableIntStateOf(0) }
+    val state         by vm.uiState.collectAsStateWithLifecycle()
+    val importPreview by vm.importPreview.collectAsStateWithLifecycle()
+    var selectedTab   by remember { mutableIntStateOf(0) }
     val tabs = listOf("Overview", "Transactions", "Limits")
-    var showAddSheet by remember { mutableStateOf(false) }
+    var showAddSheet  by remember { mutableStateOf(false) }
+
+    // XLS file picker
+    val xlsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { vm.previewXlsImport(it) }
+    }
 
     Scaffold(
         topBar = {
@@ -66,6 +74,10 @@ fun BudgetScreen(
                     }
                 },
                 actions = {
+                    // Import XLS button
+                    IconButton(onClick = { xlsLauncher.launch("application/vnd.ms-excel") }) {
+                        Icon(Icons.Default.UploadFile, contentDescription = "Import eSewa XLS")
+                    }
                     if (state.isSyncing) {
                         CircularProgressIndicator(
                             modifier    = Modifier.size(20.dp).padding(end = 8.dp),
@@ -98,12 +110,36 @@ fun BudgetScreen(
                     )
                 }
             }
+            // Sync error banner
+            state.syncError?.let {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    colors   = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Text(
+                        "⚠ $it",
+                        modifier = Modifier.padding(12.dp),
+                        color    = MaterialTheme.colorScheme.onErrorContainer,
+                        style    = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
             when (selectedTab) {
                 0 -> OverviewTab(state, vm)
                 1 -> TransactionsTab(state, vm)
                 2 -> LimitsTab(state, vm)
             }
         }
+    }
+
+    // ── XLS import duplicate dialog ───────────────────────────────────────
+    importPreview?.let { preview ->
+        DuplicateImportDialog(
+            preview   = preview,
+            onSkip    = { vm.confirmImportSkipDuplicates() },
+            onOverwrite = { vm.confirmImportOverwriteDuplicates() },
+            onDismiss = { vm.dismissImportPreview() }
+        )
     }
 
     if (showAddSheet) {
@@ -115,6 +151,62 @@ fun BudgetScreen(
             }
         )
     }
+}
+
+// ── Duplicate Import Dialog ───────────────────────────────────────────────────
+
+@Composable
+private fun DuplicateImportDialog(
+    preview: XlsImportPreview,
+    onSkip: () -> Unit,
+    onOverwrite: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Import Summary") },
+        text  = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("✅ ${preview.newTransactions.size} new transactions found")
+                if (preview.duplicates.isNotEmpty()) {
+                    Text(
+                        "⚠️ ${preview.duplicates.size} duplicate(s) already in your records",
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                if (preview.skippedFailed > 0)
+                    Text("⏭ ${preview.skippedFailed} failed transactions skipped",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (preview.skippedCredits > 0)
+                    Text("⏭ ${preview.skippedCredits} incoming credits skipped",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                if (preview.duplicates.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "How should duplicates be handled?",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (preview.duplicates.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onSkip) { Text("Skip duplicates") }
+                    Button(onClick = onOverwrite) { Text("Overwrite") }
+                }
+            } else {
+                Button(onClick = onSkip) { Text("Import") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 // ── Overview Tab ──────────────────────────────────────────────────────────────
@@ -144,15 +236,11 @@ private fun OverviewTab(state: BudgetState, vm: BudgetViewModel) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment     = Alignment.CenterVertically
                 ) {
-                    Text(
-                        "NET WORTH",
-                        style         = MaterialTheme.typography.labelSmall,
-                        color         = MaterialTheme.colorScheme.onPrimaryContainer,
-                        fontWeight    = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    )
+                    Text("NET WORTH", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     IconButton(
                         onClick  = { editingNetWorth = !editingNetWorth },
                         modifier = Modifier.size(20.dp)
@@ -184,8 +272,8 @@ private fun OverviewTab(state: BudgetState, vm: BudgetViewModel) {
                 } else {
                     Text(
                         "Rs. ${"%,.0f".format(state.netWorthRs)}",
-                        style      = MaterialTheme.typography.headlineMedium,
-                        color      = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
@@ -203,13 +291,9 @@ private fun OverviewTab(state: BudgetState, vm: BudgetViewModel) {
                 warn = limit > 0 && remaining < 0)
         }
 
-        Text(
-            "BY CATEGORY",
-            style         = MaterialTheme.typography.labelSmall,
-            fontWeight    = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color         = MaterialTheme.colorScheme.primary
-        )
+        Text("BY CATEGORY", style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+            color = MaterialTheme.colorScheme.primary)
 
         TransactionCategory.entries.forEach { cat ->
             val catSpent = byCategory[cat] ?: 0.0
@@ -221,9 +305,8 @@ private fun OverviewTab(state: BudgetState, vm: BudgetViewModel) {
 
 @Composable
 private fun SummaryChip(label: String, value: String, modifier: Modifier = Modifier, warn: Boolean = false) {
-    Card(
-        modifier = modifier,
-        colors   = CardDefaults.cardColors(
+    Card(modifier = modifier,
+        colors = CardDefaults.cardColors(
             containerColor = if (warn) MaterialTheme.colorScheme.errorContainer
                              else MaterialTheme.colorScheme.surfaceVariant
         )
@@ -317,24 +400,34 @@ private fun TransactionRow(txn: Transaction, dateFmt: SimpleDateFormat, onDelete
                     Column {
                         Text(
                             txn.merchantName.ifEmpty { txn.category.displayName() },
-                            style      = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
-                        Text(
-                            "${dateFmt.format(Date(txn.dateEpochMs))} · ${
-                                if (txn.source == TransactionSource.ESEWA) "eSewa" else "Manual"
-                            }",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                dateFmt.format(Date(txn.dateEpochMs)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text("·", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                when (txn.source) {
+                                    TransactionSource.ESEWA  -> "eSewa"
+                                    TransactionSource.MANUAL -> "Manual"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         "Rs. ${"%,.0f".format(txn.amount)}",
-                        style      = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
-                        color      = MaterialTheme.colorScheme.error
+                        color = MaterialTheme.colorScheme.error
                     )
                     IconButton(onClick = { showConfirm = true }, modifier = Modifier.size(20.dp)) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete",
@@ -362,15 +455,13 @@ private fun TransactionRow(txn: Transaction, dateFmt: SimpleDateFormat, onDelete
         }
     }
 
-    // Full screen photo viewer
     if (showFullPhoto && bitmap != null) {
         Dialog(
             onDismissRequest = { showFullPhoto = false },
             properties       = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
+                modifier         = Modifier.fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
                     .clickable { showFullPhoto = false },
                 contentAlignment = Alignment.Center
@@ -418,11 +509,9 @@ private fun LimitsTab(state: BudgetState, vm: BudgetViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
-            "Set monthly spending limits per category. Leave 0 for no limit.",
+        Text("Set monthly spending limits per category. Leave 0 for no limit.",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(4.dp))
         TransactionCategory.entries.forEach { cat ->
             val current = state.categoryBudgets.find { it.category == cat }?.limitRs ?: 0.0
@@ -454,10 +543,9 @@ private fun LimitRow(cat: TransactionCategory, currentLimit: Double, onSave: (Do
                     textStyle       = TextStyle(fontFamily = Exo, fontSize = 14.sp),
                     modifier        = Modifier.width(150.dp),
                     trailingIcon    = {
-                        TextButton(onClick = {
-                            onSave(draft.toDoubleOrNull() ?: 0.0)
-                            editing = false
-                        }) { Text("Save") }
+                        TextButton(onClick = { onSave(draft.toDoubleOrNull() ?: 0.0); editing = false }) {
+                            Text("Save")
+                        }
                     }
                 )
             } else {
@@ -484,15 +572,14 @@ private fun AddTransactionSheet(
 ) {
     val context = LocalContext.current
 
-    var amount        by remember { mutableStateOf("") }
-    var merchant      by remember { mutableStateOf("") }
-    var note          by remember { mutableStateOf("") }
-    var category      by remember { mutableStateOf(TransactionCategory.OTHER) }
-    var expanded      by remember { mutableStateOf(false) }
-    var photoBytes    by remember { mutableStateOf<ByteArray?>(null) }
-    var showSrcSheet  by remember { mutableStateOf(false) }
+    var amount       by remember { mutableStateOf("") }
+    var merchant     by remember { mutableStateOf("") }
+    var note         by remember { mutableStateOf("") }
+    var category     by remember { mutableStateOf(TransactionCategory.OTHER) }
+    var expanded     by remember { mutableStateOf(false) }
+    var photoBytes   by remember { mutableStateOf<ByteArray?>(null) }
+    var showSrcSheet by remember { mutableStateOf(false) }
 
-    // Camera temp file
     val cameraFile = remember { File(context.cacheDir, "budget_bill_capture.jpg").also { it.delete() } }
     val cameraUri: Uri = remember {
         FileProvider.getUriForFile(context, "${context.packageName}.provider", cameraFile)
@@ -522,30 +609,22 @@ private fun AddTransactionSheet(
     if (showSrcSheet) {
         ModalBottomSheet(onDismissRequest = { showSrcSheet = false }) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = 32.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text("Attach bill photo", style = MaterialTheme.typography.titleMedium)
-                Button(
-                    onClick = {
-                        showSrcSheet = false
-                        if (cameraPermGranted) cameraLauncher.launch(cameraUri)
-                        else permLauncher.launch(Manifest.permission.CAMERA)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Take photo") }
-                OutlinedButton(
-                    onClick = { showSrcSheet = false; galleryLauncher.launch("image/*") },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Choose from gallery") }
+                Button(onClick = {
+                    showSrcSheet = false
+                    if (cameraPermGranted) cameraLauncher.launch(cameraUri)
+                    else permLauncher.launch(Manifest.permission.CAMERA)
+                }, modifier = Modifier.fillMaxWidth()) { Text("Take photo") }
+                OutlinedButton(onClick = { showSrcSheet = false; galleryLauncher.launch("image/*") },
+                    modifier = Modifier.fillMaxWidth()) { Text("Choose from gallery") }
                 if (photoBytes != null) {
-                    TextButton(
-                        onClick = { photoBytes = null; showSrcSheet = false },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Remove photo", color = MaterialTheme.colorScheme.error) }
+                    TextButton(onClick = { photoBytes = null; showSrcSheet = false },
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("Remove photo", color = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
@@ -553,52 +632,31 @@ private fun AddTransactionSheet(
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Add Transaction", style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold)
+            Text("Add Transaction", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
-            OutlinedTextField(
-                value           = amount,
-                onValueChange   = { amount = it },
-                label           = { Text("Amount") },
-                prefix          = { Text("Rs. ") },
+            OutlinedTextField(value = amount, onValueChange = { amount = it },
+                label = { Text("Amount") }, prefix = { Text("Rs. ") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine      = true,
-                textStyle       = TextStyle(fontFamily = Exo),
-                modifier        = Modifier.fillMaxWidth()
-            )
+                singleLine = true, textStyle = TextStyle(fontFamily = Exo),
+                modifier = Modifier.fillMaxWidth())
 
-            OutlinedTextField(
-                value         = merchant,
-                onValueChange = { merchant = it },
-                label         = { Text("Merchant / Place") },
-                singleLine    = true,
-                textStyle     = TextStyle(fontFamily = Exo),
-                modifier      = Modifier.fillMaxWidth()
-            )
+            OutlinedTextField(value = merchant, onValueChange = { merchant = it },
+                label = { Text("Merchant / Place") }, singleLine = true,
+                textStyle = TextStyle(fontFamily = Exo), modifier = Modifier.fillMaxWidth())
 
-            OutlinedTextField(
-                value         = note,
-                onValueChange = { note = it },
-                label         = { Text("Note (optional)") },
-                singleLine    = true,
-                textStyle     = TextStyle(fontFamily = Exo),
-                modifier      = Modifier.fillMaxWidth()
-            )
+            OutlinedTextField(value = note, onValueChange = { note = it },
+                label = { Text("Note (optional)") }, singleLine = true,
+                textStyle = TextStyle(fontFamily = Exo), modifier = Modifier.fillMaxWidth())
 
             ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
                 OutlinedTextField(
-                    value         = "${category.emoji()} ${category.displayName()}",
-                    onValueChange = {},
-                    readOnly      = true,
-                    label         = { Text("Category") },
-                    trailingIcon  = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                    modifier      = Modifier.menuAnchor().fillMaxWidth()
+                    value = "${category.emoji()} ${category.displayName()}",
+                    onValueChange = {}, readOnly = true, label = { Text("Category") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth()
                 )
                 ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                     TransactionCategory.entries.forEach { cat ->
@@ -610,41 +668,25 @@ private fun AddTransactionSheet(
                 }
             }
 
-            // Photo preview + attach button
             val previewBitmap = remember(photoBytes) {
                 photoBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
             }
 
             if (previewBitmap != null) {
                 Box {
-                    Image(
-                        bitmap             = previewBitmap.asImageBitmap(),
-                        contentDescription = "Bill preview",
-                        contentScale       = ContentScale.Crop,
-                        modifier           = Modifier
-                            .fillMaxWidth()
-                            .height(140.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                    )
-                    IconButton(
-                        onClick  = { photoBytes = null },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(4.dp)
-                            .background(
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
-                                RoundedCornerShape(50)
-                            )
+                    Image(bitmap = previewBitmap.asImageBitmap(), contentDescription = "Bill preview",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(8.dp)))
+                    IconButton(onClick = { photoBytes = null },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), RoundedCornerShape(50))
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Remove photo",
                             tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             } else {
-                OutlinedButton(
-                    onClick  = { showSrcSheet = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                OutlinedButton(onClick = { showSrcSheet = true }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.AddAPhoto, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Attach bill photo")

@@ -1,6 +1,7 @@
 package com.alpha.features.budget
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.alpha.features.budget.models.BudgetState
@@ -19,6 +20,14 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 
+// Holds result of an XLS import before user confirms duplicates
+data class XlsImportPreview(
+    val newTransactions: List<Transaction>,       // brand new, no conflict
+    val duplicates: List<Transaction>,            // already exist by ID
+    val skippedFailed: Int,
+    val skippedCredits: Int
+)
+
 class BudgetViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo             = BudgetRepository(app)
@@ -29,7 +38,12 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(BudgetState())
     val uiState: StateFlow<BudgetState> = _uiState.asStateFlow()
 
-    var driveAccessToken: String? = null
+    // Pending import waiting for duplicate resolution
+    private val _importPreview = MutableStateFlow<XlsImportPreview?>(null)
+    val importPreview: StateFlow<XlsImportPreview?> = _importPreview.asStateFlow()
+
+    private var _driveAccessToken: String? = null
+    val driveAccessToken: String? get() = _driveAccessToken
 
     init {
         viewModelScope.launch {
@@ -42,10 +56,68 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ── XLS Import ────────────────────────────────────────────────────────
+
+    /** Step 1: parse XLS and produce a preview (new vs duplicates) */
+    fun previewXlsImport(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(isSyncing = true, syncError = null) }
+            runCatching {
+                val result      = EsewaXlsParser.parse(getApplication(), uri)
+                val existingIds = _uiState.value.transactions.map { it.id }.toSet()
+
+                val newTxns    = result.transactions.filter { it.id !in existingIds }
+                val duplicates = result.transactions.filter { it.id in existingIds }
+
+                _importPreview.value = XlsImportPreview(
+                    newTransactions = newTxns,
+                    duplicates      = duplicates,
+                    skippedFailed   = result.skippedFailed,
+                    skippedCredits  = result.skippedCredits
+                )
+            }.onFailure { e ->
+                _uiState.update { it.copy(syncError = "Import failed: ${e.message}") }
+            }
+            _uiState.update { it.copy(isSyncing = false) }
+        }
+    }
+
+    /** Step 2a: confirm import — new records only, skip duplicates */
+    fun confirmImportSkipDuplicates() {
+        val preview = _importPreview.value ?: return
+        viewModelScope.launch {
+            val updated = _uiState.value.transactions + preview.newTransactions
+            repo.saveTransactions(updated)
+            _uiState.update { it.copy(transactions = updated) }
+            pushToDriveIfOnline(updated)
+            _importPreview.value = null
+        }
+    }
+
+    /** Step 2b: confirm import — new records + overwrite duplicates */
+    fun confirmImportOverwriteDuplicates() {
+        val preview = _importPreview.value ?: return
+        viewModelScope.launch {
+            val overwriteIds = preview.duplicates.map { it.id }.toSet()
+            // Remove old versions of duplicates, then add all (new + overwritten)
+            val base    = _uiState.value.transactions.filterNot { it.id in overwriteIds }
+            val updated = base + preview.newTransactions + preview.duplicates
+            repo.saveTransactions(updated)
+            _uiState.update { it.copy(transactions = updated) }
+            pushToDriveIfOnline(updated)
+            _importPreview.value = null
+        }
+    }
+
+    /** Dismiss the import preview without saving */
+    fun dismissImportPreview() {
+        _importPreview.value = null
+    }
+
     // ── Drive sync ────────────────────────────────────────────────────────
 
     private suspend fun pullFromDriveIfOnline() {
-        val token = driveAccessToken ?: return
+        val token = _driveAccessToken ?: return
         if (!driveSync.isOnline()) return
         runCatching {
             val json = driveSync.pullBackup(token) ?: return
@@ -58,7 +130,7 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun pushToDriveIfOnline(transactions: List<Transaction>) {
-        val token = driveAccessToken ?: return
+        val token = _driveAccessToken ?: return
         if (!driveSync.isOnline()) return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
@@ -69,12 +141,12 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setDriveAccessToken(token: String) {
-        driveAccessToken = token
+        _driveAccessToken = token
         viewModelScope.launch(Dispatchers.IO) { pullFromDriveIfOnline() }
     }
 
     fun forceDriveSync() {
-        val token = driveAccessToken ?: run {
+        val token = _driveAccessToken ?: run {
             _uiState.update { it.copy(syncError = "Not signed in to Google") }
             return
         }
@@ -99,16 +171,13 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
             runCatching {
                 val existingGmailIds = _uiState.value.transactions
                     .mapNotNull { it.gmailMessageId }.toSet()
-
                 val messageIds = fetchGmailMessageIds(gmailAccessToken)
                 val newTxns    = mutableListOf<Transaction>()
-
                 messageIds.forEach { msgId ->
                     if (msgId in existingGmailIds) return@forEach
                     val (subject, body, dateMs) = fetchGmailMessage(gmailAccessToken, msgId)
                     GmailParser.parse(msgId, subject, body, dateMs)?.let { newTxns.add(it) }
                 }
-
                 if (newTxns.isNotEmpty()) {
                     val merged = _uiState.value.transactions + newTxns
                     repo.saveTransactions(merged)
@@ -123,10 +192,8 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun fetchGmailMessageIds(token: String): List<String> {
-        val url = "https://gmail.googleapis.com/gmail/v1/users/me/messages" +
-                  "?q=from:esewa&maxResults=100"
-        val req = Request.Builder().url(url)
-            .addHeader("Authorization", "Bearer $token").build()
+        val url = "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=from:esewa&maxResults=100"
+        val req = Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
         val body = http.newCall(req).execute().body?.string() ?: return emptyList()
         val arr  = JSONObject(body).optJSONArray("messages") ?: return emptyList()
         return (0 until arr.length()).map { arr.getJSONObject(it).getString("id") }
@@ -136,12 +203,10 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun fetchGmailMessage(token: String, msgId: String): GmailMessage {
         val url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/$msgId?format=full"
-        val req = Request.Builder().url(url)
-            .addHeader("Authorization", "Bearer $token").build()
+        val req = Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
         val json    = JSONObject(http.newCall(req).execute().body?.string() ?: "{}")
         val payload = json.optJSONObject("payload") ?: JSONObject()
         val headers = payload.optJSONArray("headers") ?: JSONArray()
-
         var subject = ""
         var dateMs  = System.currentTimeMillis()
         for (i in 0 until headers.length()) {
@@ -184,35 +249,25 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
         billPhotoBytes: ByteArray? = null
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            val txnId = java.util.UUID.randomUUID().toString()
-
-            // Save photo locally first, get path
-            val photoPath = billPhotoBytes?.let {
-                billPhotoManager.saveLocally(txnId, it)
-            }
-
+            val txnId     = java.util.UUID.randomUUID().toString()
+            val photoPath = billPhotoBytes?.let { billPhotoManager.saveLocally(txnId, it) }
             val txn = Transaction(
-                id           = txnId,
-                amount       = amount,
-                category     = category,
-                source       = TransactionSource.MANUAL,
-                merchantName = merchant,
-                note         = note,
-                dateEpochMs  = dateMs,
+                id            = txnId,
+                amount        = amount,
+                category      = category,
+                source        = TransactionSource.MANUAL,
+                merchantName  = merchant,
+                note          = note,
+                dateEpochMs   = dateMs,
                 billPhotoPath = photoPath
             )
-
             val updated = _uiState.value.transactions + txn
             repo.saveTransactions(updated)
             _uiState.update { it.copy(transactions = updated) }
             pushToDriveIfOnline(updated)
-
-            // Upload photo to Drive in background
             if (photoPath != null) {
-                driveAccessToken?.let { token ->
-                    if (driveSync.isOnline()) {
-                        billPhotoManager.uploadToDrive(token, txnId, photoPath)
-                    }
+                _driveAccessToken?.let { token ->
+                    if (driveSync.isOnline()) billPhotoManager.uploadToDrive(token, txnId, photoPath)
                 }
             }
         }
@@ -220,12 +275,10 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteTransaction(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            // Clean up photo
             billPhotoManager.deleteLocally(id)
-            driveAccessToken?.let { token ->
+            _driveAccessToken?.let { token ->
                 if (driveSync.isOnline()) billPhotoManager.deleteFromDrive(token, id)
             }
-
             val updated = _uiState.value.transactions.filterNot { it.id == id }
             repo.saveTransactions(updated)
             _uiState.update { it.copy(transactions = updated) }

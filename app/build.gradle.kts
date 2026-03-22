@@ -60,12 +60,12 @@ android {
             freeCompilerArgs.addAll(
                 "-P",
                 "plugin:androidx.compose.compiler.plugins.kotlin:reportsDestination=" +
-                        project.buildDir.absolutePath + "/compose_metrics"
+                        layout.buildDirectory.asFile.get().absolutePath + "/compose_metrics"
             )
             freeCompilerArgs.addAll(
                 "-P",
                 "plugin:androidx.compose.compiler.plugins.kotlin:metricsDestination=" +
-                        project.buildDir.absolutePath + "/compose_metrics"
+                        layout.buildDirectory.asFile.get().absolutePath + "/compose_metrics"
             )
         }
     }
@@ -93,5 +93,6 @@ dependencies {
     implementation(libs.camerax.camera2)
     implementation(libs.camerax.lifecycle)
     implementation(libs.camerax.view)
+    implementation(libs.poi)
     debugImplementation(libs.androidx.ui.tooling)
 }
